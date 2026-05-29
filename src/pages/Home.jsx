@@ -33,6 +33,7 @@ const SCRIPT_EMOTION_KEYWORDS = {
 
 const ANIME_DB = animeDataset
 const HF_API_KEY = import.meta.env.VITE_HF_API_KEY || ''
+const HF_API_KEY_MISSING = !HF_API_KEY
 
 const initialSliders = EMOTIONS.reduce((acc, emotion) => {
   acc[emotion.key] = emotion.default
@@ -274,6 +275,11 @@ export default function Home() {
 
   async function runScriptAnalysis() {
     if (!analysisReady) return
+
+    if (HF_API_KEY_MISSING) {
+      setAnalysisError('Hugging Face API key is missing. Add VITE_HF_API_KEY to .env and restart the app.')
+      return
+    }
 
     setAnalysisError('')
     setAnalysisRunning(true)
@@ -554,6 +560,12 @@ export default function Home() {
                     <div className="upload-sub">Supports .srt, .txt — max 100 lines analyzed</div>
                   </div>
                   <input type="file" id="file-input" accept=".srt,.txt" onChange={handleFileUpload} hidden />
+
+                  {HF_API_KEY_MISSING ? (
+                    <div style={{ marginBottom: 12, padding: 12, borderRadius: 12, background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.2)', color: '#60a5fa', fontSize: 13 }}>
+                      Hugging Face API key is missing. Create a `.env` file with <code>VITE_HF_API_KEY=your_key</code> and restart the app.
+                    </div>
+                  ) : null}
 
                   <div id="file-info" style={{ display: analysisReady ? 'block' : 'none', padding: 12, background: 'var(--surface2)', borderRadius: 8, marginBottom: 14 }}>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fileName}</div>
