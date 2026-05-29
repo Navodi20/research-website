@@ -32,12 +32,6 @@ const SCRIPT_EMOTION_KEYWORDS = {
 }
 
 const ANIME_DB = animeDataset
-const HF_API_KEY =
-  import.meta.env.VITE_HF_API_KEY ||
-  import.meta.env.VITE_HUGGINGFACE_API_KEY ||
-  import.meta.env.VITE_HUGGING_FACE_API_KEY ||
-  ''
-const HF_API_KEY_MISSING = !HF_API_KEY
 
 const initialSliders = EMOTIONS.reduce((acc, emotion) => {
   acc[emotion.key] = emotion.default
@@ -228,38 +222,30 @@ export default function Home() {
   }
 
   async function analyzeWithHuggingFace(text) {
-    if (!HF_API_KEY) {
-      throw new Error('Hugging Face API key is missing. Set VITE_HF_API_KEY in .env or workflow secrets.')
-    }
+    const response = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text }),
+    })
 
-    const response = await fetch(
-      'https://api-inference.huggingface.co/models/j-hartmann/emotion-english-distilroberta-base',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${HF_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ inputs: text, options: { wait_for_model: true } }),
-      }
-    )
+    const result = await response.json()
 
-    const prediction = await response.json()
-
-    if (!response.ok || prediction?.error) {
-      const reason = prediction?.error || response.statusText || 'Unknown error'
-      throw new Error(`Hugging Face inference failed: ${response.status} ${reason}`)
+    if (!response.ok) {
+      const reason = result?.error || response.statusText || 'Unknown inference error'
+      throw new Error(`Hugging Face inference proxy failed: ${reason}`)
     }
 
     const counts = { angry: 0, disgust: 0, fear: 0, happy: 0, neutral: 0, sad: 0, surprise: 0 }
 
-    if (Array.isArray(prediction)) {
-      for (const item of prediction) {
+    if (Array.isArray(result)) {
+      for (const item of result) {
         const key = mapHfLabelToKey(item.label || '')
         counts[key] += item.score || 0
       }
     } else {
-      throw new Error('Unexpected Hugging Face response format.')
+      throw new Error('Unexpected inference API response format.')
     }
 
     return counts
@@ -302,11 +288,6 @@ export default function Home() {
 
   async function runScriptAnalysis() {
     if (!analysisReady) return
-
-    if (HF_API_KEY_MISSING) {
-      setAnalysisError('Hugging Face API key is missing. Add VITE_HF_API_KEY to .env and restart the app.')
-      return
-    }
 
     setAnalysisError('')
     setAnalysisRunning(true)
@@ -593,11 +574,6 @@ export default function Home() {
                   </div>
                   <input type="file" id="file-input" accept=".srt,.txt" onChange={handleFileUpload} hidden />
 
-                  {HF_API_KEY_MISSING ? (
-                    <div style={{ marginBottom: 12, padding: 12, borderRadius: 12, background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.2)', color: '#60a5fa', fontSize: 13 }}>
-                      Hugging Face API key is missing. Create a `.env` file with <code>VITE_HF_API_KEY=your_key</code> and restart the app.
-                    </div>
-                  ) : null}
 
                   <div id="file-info" style={{ display: analysisReady ? 'block' : 'none', padding: 12, background: 'var(--surface2)', borderRadius: 8, marginBottom: 14 }}>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fileName}</div>

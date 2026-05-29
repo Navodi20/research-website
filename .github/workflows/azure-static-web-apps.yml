@@ -45,5 +45,5 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }} # Used for GitHub integrations (do not change)
           action: "upload"
           app_location: "/" # App root
-          api_location: ""   # No Azure Functions
+          api_location: "api"   # Azure Functions API proxy
           output_location: "dist" # Vite build output
