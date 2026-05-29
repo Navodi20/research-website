@@ -20,10 +20,11 @@ jobs:
 
       - name: Build
         env:
-          VITE_HF_API_KEY: ${{ secrets.VITE_HF_API_KEY }}
+          # Accept either `VITE_HF_API_KEY` or the alternate `VITE_HF_KEY` repository secret
+          VITE_HF_API_KEY: ${{ secrets.VITE_HF_API_KEY || secrets.VITE_HF_KEY }}
         run: |
           # Ensure the Hugging Face key is available at build time for Vite
-          if [ -z "$VITE_HF_API_KEY" ]; then echo "Warning: VITE_HF_API_KEY is not set in Secrets"; fi
+          if [ -z "$VITE_HF_API_KEY" ]; then echo "Warning: VITE_HF_API_KEY is not set in Secrets (tried VITE_HF_API_KEY and VITE_HF_KEY)"; fi
           npm ci
           npm run build
 
