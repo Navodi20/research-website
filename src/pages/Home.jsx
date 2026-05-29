@@ -32,6 +32,7 @@ const SCRIPT_EMOTION_KEYWORDS = {
 }
 
 const ANIME_DB = animeDataset
+const HF_API_KEY = import.meta.env.VITE_HF_API_KEY || ''
 
 const initialSliders = EMOTIONS.reduce((acc, emotion) => {
   acc[emotion.key] = emotion.default
@@ -57,6 +58,7 @@ export default function Home() {
   const [uploadedText, setUploadedText] = useState('')
   const [analysisReady, setAnalysisReady] = useState(false)
   const [analysisRunning, setAnalysisRunning] = useState(false)
+  const [analysisError, setAnalysisError] = useState('')
   const [scriptResults, setScriptResults] = useState(initialScriptResults)
   const [scriptSummary, setScriptSummary] = useState('—')
 
@@ -184,6 +186,73 @@ export default function Home() {
     }, {})
   }
 
+  function mapHfLabelToKey(label) {
+    const mapping = {
+      angry: 'angry',
+      anger: 'angry',
+      disgust: 'disgust',
+      fear: 'fear',
+      joy: 'happy',
+      happiness: 'happy',
+      neutral: 'neutral',
+      sadness: 'sad',
+      sad: 'sad',
+      surprise: 'surprise',
+    }
+    return mapping[label.toLowerCase()] || 'neutral'
+  }
+
+  async function analyzeWithHuggingFace(text) {
+    if (!HF_API_KEY) {
+      throw new Error('Hugging Face API key is missing. Set VITE_HF_API_KEY in .env.')
+    }
+
+    const response = await fetch(
+      'https://api-inference.huggingface.co/models/j-hartmann/emotion-english-distilroberta-base',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${HF_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ inputs: text, options: { wait_for_model: true } }),
+      }
+    )
+
+    if (!response.ok) {
+      const error = await response.text()
+      throw new Error(`Hugging Face inference failed: ${response.status} ${error}`)
+    }
+
+    const prediction = await response.json()
+    const counts = { angry: 0, disgust: 0, fear: 0, happy: 0, neutral: 0, sad: 0, surprise: 0 }
+
+    if (Array.isArray(prediction)) {
+      for (const item of prediction) {
+        const key = mapHfLabelToKey(item.label || '')
+        counts[key] += item.score || 0
+      }
+    }
+
+    return counts
+  }
+
+  async function generateScriptResults(text) {
+    const lines = String(text)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !/^\d+$/.test(line) && !/^\d{2}:\d{2}/.test(line))
+
+    if (!lines.length) {
+      throw new Error('No valid dialogue lines found in the uploaded script.')
+    }
+
+    const sample = lines.slice(0, Math.min(25, lines.length))
+    const prompt = sample.join(' ')
+    const counts = await analyzeWithHuggingFace(prompt)
+    return normalizeScriptScores(counts)
+  }
+
   function getScriptKeywordCounts(text) {
     const normalized = String(text).toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
     const tokens = normalized.split(/\s+/).filter(Boolean)
@@ -203,54 +272,30 @@ export default function Home() {
     return counts
   }
 
-  function generateScriptResults(text) {
-    const counts = getScriptKeywordCounts(text)
-    const countSum = Object.values(counts).reduce((sum, value) => sum + value, 0)
-    if (countSum === 0) {
-      const seed = Array.from(text).reduce((sum, char) => sum + char.charCodeAt(0), 0)
-      const offsets = {
-        angry: (seed % 5) + 2,
-        disgust: ((seed >> 2) % 4) + 1,
-        fear: ((seed >> 4) % 5) + 2,
-        happy: ((seed >> 6) % 8) + 6,
-        neutral: ((seed >> 8) % 6) + 8,
-        sad: ((seed >> 10) % 4) + 2,
-        surprise: ((seed >> 12) % 5) + 2,
-      }
-      return normalizeScriptScores(offsets)
-    }
-    return normalizeScriptScores(counts)
-  }
-
-  function runScriptAnalysis() {
+  async function runScriptAnalysis() {
     if (!analysisReady) return
 
+    setAnalysisError('')
     setAnalysisRunning(true)
     setScriptResults(initialScriptResults)
     setScriptSummary('—')
     setShowResults(true)
 
-    const limit = Math.min(uploadedLines.length || 50, 100)
-    let processed = 0
+    try {
+      const results = await generateScriptResults(uploadedText)
+      setScriptResults(results)
 
-    const interval = setInterval(() => {
-      processed += Math.floor(Math.random() * 8 + 3)
-      if (processed >= limit) {
-        processed = limit
-        clearInterval(interval)
-        const results = generateScriptResults(uploadedText)
-        setScriptResults(results)
-
-        const sorted = [...SCRIPT_EMOTIONS].sort((a, b) => results[b.key] - results[a.key])
-        const top3 = sorted.slice(0, 3)
-        setScriptSummary(
-          `The script's dominant emotional signature is ${top3[0].label.toLowerCase()} (${results[top3[0].key].toFixed(1)}%), with notable presence of ${top3[1].label.toLowerCase()} (${results[top3[1].key].toFixed(1)}%) and ${top3[2].label.toLowerCase()} (${results[top3[2].key].toFixed(1)}%). DistilRoBERTa inference averaged across ${limit} dialogue lines via softmax probability pooling.`
-        )
-        setAnalysisRunning(false)
-        return
-      }
+      const sorted = [...SCRIPT_EMOTIONS].sort((a, b) => results[b.key] - results[a.key])
+      const top3 = sorted.slice(0, 3)
+      setScriptSummary(
+        `The script's dominant emotional signature is ${top3[0].label.toLowerCase()} (${results[top3[0].key].toFixed(1)}%), with notable presence of ${top3[1].label.toLowerCase()} (${results[top3[1].key].toFixed(1)}%) and ${top3[2].label.toLowerCase()} (${results[top3[2].key].toFixed(1)}%). DistilRoBERTa inference averaged across the first 25 dialogue lines.`
+      )
+    } catch (error) {
+      setAnalysisError(error?.message || 'Analysis failed.')
       setScriptSummary('—')
-    }, 120)
+    } finally {
+      setAnalysisRunning(false)
+    }
   }
 
   return (
@@ -514,6 +559,11 @@ export default function Home() {
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fileName}</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{fileLines} dialogue lines detected</div>
                   </div>
+                  {analysisError ? (
+                    <div style={{ marginBottom: 12, padding: 12, borderRadius: 12, background: 'rgba(248, 113, 113, 0.12)', border: '1px solid rgba(248, 113, 113, 0.2)', color: '#fca5a5', fontSize: 13 }}>
+                      {analysisError}
+                    </div>
+                  ) : null}
 
                   <button className="run-btn" onClick={runScriptAnalysis} disabled={!analysisReady} style={{ opacity: analysisReady ? 1 : 0.4 }}>
                     &#9654; Analyze Script
@@ -547,9 +597,9 @@ export default function Home() {
                 </div>
 
                 <div id="script-processing" style={{ display: analysisRunning ? 'block' : 'none', padding: 20, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10, fontFamily: "'DM Mono', monospace" }}>Simulating DistilRoBERTa inference...</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10, fontFamily: "'DM Mono', monospace" }}>Calling j-hartmann/emotion-english-distilroberta-base...</div>
                   <div className="loading-bar"><div className="loading-fill" /></div>
-                  <div id="script-progress" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>Processing lines...</div>
+                  <div id="script-progress" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>Analyzing up to 25 dialogue lines...</div>
                 </div>
 
                 <div className="analysis-results">
