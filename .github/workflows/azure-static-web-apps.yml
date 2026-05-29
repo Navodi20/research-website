@@ -16,13 +16,18 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          # Vite requires Node >= 20.19.0 (or 22.12+); use 20.19.x for CI
+          node-version: '20.19.0'
+          cache: 'npm'
 
       - name: Build
         env:
           # Accept either `VITE_HF_API_KEY` or the alternate `VITE_HF_KEY` repository secret
           VITE_HF_API_KEY: ${{ secrets.VITE_HF_API_KEY || secrets.VITE_HF_KEY }}
         run: |
+          # Sanity check: print Node and npm versions
+          node -v
+          npm -v
           # Ensure the Hugging Face key is available at build time for Vite
           if [ -z "$VITE_HF_API_KEY" ]; then echo "Warning: VITE_HF_API_KEY is not set in Secrets (tried VITE_HF_API_KEY and VITE_HF_KEY)"; fi
           npm ci
