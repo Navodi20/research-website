@@ -16,12 +16,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # Vite requires Node >= 20.19.0 (or 22.12+); use 20.19.x for CI
-          node-version: '20.19.0'
+          # Use Node 24 to avoid deprecation warnings on the runner; Vite supports Node >=20/22/24
+          node-version: '24'
           cache: 'npm'
 
       - name: Build
         env:
+          # Opt into Node 24 for JavaScript actions on the runner (prevents deprecation warnings)
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
           # Accept either `VITE_HF_API_KEY` or the alternate `VITE_HF_KEY` repository secret
           VITE_HF_API_KEY: ${{ secrets.VITE_HF_API_KEY || secrets.VITE_HF_KEY }}
         run: |
