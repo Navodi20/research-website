@@ -19,7 +19,11 @@ jobs:
           node-version: '18'
 
       - name: Build
+        env:
+          VITE_HF_API_KEY: ${{ secrets.VITE_HF_API_KEY }}
         run: |
+          # Ensure the Hugging Face key is available at build time for Vite
+          if [ -z "$VITE_HF_API_KEY" ]; then echo "Warning: VITE_HF_API_KEY is not set in Secrets"; fi
           npm ci
           npm run build
 

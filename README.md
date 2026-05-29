@@ -24,3 +24,15 @@ VITE_HF_API_KEY=your_huggingface_api_key_here
 ```
 
 After creating or updating `.env`, restart the development server.
+
+### Deployments (GitHub Actions / Azure)
+
+The production site is built during CI. Vite embeds env vars at build time, so you must set the Hugging Face key as a repository secret for GitHub Actions.
+
+1. In your GitHub repository, go to **Settings → Secrets and variables → Actions → New repository secret**.
+2. Add a secret named `VITE_HF_API_KEY` with your Hugging Face API key as the value.
+3. Push to `main` (the workflow will read this secret during the `npm run build` step and embed it into the build).
+
+Alternatively, if you use Azure Static Web Apps directly, you can configure application settings in the Azure Portal, but for static builds the key still needs to be available during the build step.
+
+Security note: rotate the key if it was ever committed to the repository.
