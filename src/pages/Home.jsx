@@ -32,7 +32,11 @@ const SCRIPT_EMOTION_KEYWORDS = {
 }
 
 const ANIME_DB = animeDataset
-const HF_API_KEY = import.meta.env.VITE_HF_API_KEY || ''
+const HF_API_KEY =
+  import.meta.env.VITE_HF_API_KEY ||
+  import.meta.env.VITE_HUGGINGFACE_API_KEY ||
+  import.meta.env.VITE_HUGGING_FACE_API_KEY ||
+  ''
 const HF_API_KEY_MISSING = !HF_API_KEY
 
 const initialSliders = EMOTIONS.reduce((acc, emotion) => {
@@ -156,6 +160,7 @@ export default function Home() {
   function handleFileUpload(event) {
     const file = event.target.files?.[0]
     if (!file) return
+    setAnalysisError('')
 
     const reader = new FileReader()
     reader.onload = (e) => {
@@ -169,9 +174,28 @@ export default function Home() {
       setUploadedLines(lines)
       setFileName(file.name)
       setFileLines(lines.length)
-      setAnalysisReady(true)
+      setAnalysisReady(lines.length > 0)
     }
     reader.readAsText(file)
+  }
+
+  function handleDrop(event) {
+    event.preventDefault()
+    event.stopPropagation()
+    const file = event.dataTransfer?.files?.[0]
+    if (!file) return
+    const fileInput = document.getElementById('file-input')
+    if (fileInput) {
+      const dataTransfer = new DataTransfer()
+      dataTransfer.items.add(file)
+      fileInput.files = dataTransfer.files
+    }
+    handleFileUpload({ target: { files: [file] } })
+  }
+
+  function handleDragOver(event) {
+    event.preventDefault()
+    event.stopPropagation()
   }
 
   function normalizeScriptScores(counts) {
@@ -205,7 +229,7 @@ export default function Home() {
 
   async function analyzeWithHuggingFace(text) {
     if (!HF_API_KEY) {
-      throw new Error('Hugging Face API key is missing. Set VITE_HF_API_KEY in .env.')
+      throw new Error('Hugging Face API key is missing. Set VITE_HF_API_KEY in .env or workflow secrets.')
     }
 
     const response = await fetch(
@@ -220,12 +244,13 @@ export default function Home() {
       }
     )
 
-    if (!response.ok) {
-      const error = await response.text()
-      throw new Error(`Hugging Face inference failed: ${response.status} ${error}`)
+    const prediction = await response.json()
+
+    if (!response.ok || prediction?.error) {
+      const reason = prediction?.error || response.statusText || 'Unknown error'
+      throw new Error(`Hugging Face inference failed: ${response.status} ${reason}`)
     }
 
-    const prediction = await response.json()
     const counts = { angry: 0, disgust: 0, fear: 0, happy: 0, neutral: 0, sad: 0, surprise: 0 }
 
     if (Array.isArray(prediction)) {
@@ -233,6 +258,8 @@ export default function Home() {
         const key = mapHfLabelToKey(item.label || '')
         counts[key] += item.score || 0
       }
+    } else {
+      throw new Error('Unexpected Hugging Face response format.')
     }
 
     return counts
@@ -554,7 +581,12 @@ export default function Home() {
                   <div className="panel-title">Script Upload</div>
                 </div>
                 <div className="panel-body">
-                  <div className="upload-zone" onClick={() => document.getElementById('file-input')?.click()}>
+                  <div
+                    className="upload-zone"
+                    onClick={() => document.getElementById('file-input')?.click()}
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
+                  >
                     <div className="upload-icon">📁</div>
                     <div className="upload-title">Drop subtitle file here</div>
                     <div className="upload-sub">Supports .srt, .txt — max 100 lines analyzed</div>
