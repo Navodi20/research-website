@@ -21,6 +21,16 @@ const SCRIPT_EMOTIONS = [
   { key: 'surprise', label: 'Surprise', color: '#c084fc' },
 ]
 
+const SCRIPT_EMOTION_KEYWORDS = {
+  angry: ['angry', 'anger', 'rage', 'kill', 'fight', 'attack', 'hate', 'furious', 'violent', 'scream'],
+  disgust: ['disgust', 'disgusting', 'gross', 'nasty', 'sick', 'dirty', 'filth', 'rotten', 'revolting', 'vomit'],
+  fear: ['fear', 'afraid', 'scared', 'terrified', 'panic', 'horror', 'danger', 'threat', 'fright', 'nervous'],
+  happy: ['happy', 'joy', 'joyful', 'smile', 'laugh', 'cheer', 'delight', 'love', 'excited', 'sunny', 'bright'],
+  neutral: ['okay', 'fine', 'clear', 'routine', 'normal', 'neutral', 'steady', 'simple', 'matter', 'detail'],
+  sad: ['sad', 'sorrow', 'cry', 'tears', 'lonely', 'mourn', 'grief', 'hurt', 'regret', 'depressed'],
+  surprise: ['surprise', 'surprised', 'wow', 'shock', 'shocked', 'unexpected', 'astonished', 'sudden', 'amazing', 'incredible'],
+}
+
 const ANIME_DB = animeDataset
 
 const initialSliders = EMOTIONS.reduce((acc, emotion) => {
@@ -44,6 +54,7 @@ export default function Home() {
   const [uploadedLines, setUploadedLines] = useState([])
   const [fileName, setFileName] = useState('—')
   const [fileLines, setFileLines] = useState(0)
+  const [uploadedText, setUploadedText] = useState('')
   const [analysisReady, setAnalysisReady] = useState(false)
   const [analysisRunning, setAnalysisRunning] = useState(false)
   const [scriptResults, setScriptResults] = useState(initialScriptResults)
@@ -151,6 +162,7 @@ export default function Home() {
         .map((line) => line.trim())
         .filter((line) => line && !/^\d+$/.test(line) && !/^\d{2}:\d{2}/.test(line))
 
+      setUploadedText(String(content))
       setUploadedLines(lines)
       setFileName(file.name)
       setFileLines(lines.length)
@@ -159,23 +171,55 @@ export default function Home() {
     reader.readAsText(file)
   }
 
-  function generateScriptResults() {
-    const base = {
-      angry: 8 + Math.random() * 20,
-      disgust: 3 + Math.random() * 10,
-      fear: 5 + Math.random() * 18,
-      happy: 15 + Math.random() * 35,
-      neutral: 20 + Math.random() * 30,
-      sad: 5 + Math.random() * 20,
-      surprise: 5 + Math.random() * 15,
+  function normalizeScriptScores(counts) {
+    const base = { angry: 1, disgust: 1, fear: 1, happy: 3, neutral: 4, sad: 1, surprise: 1 }
+    const totals = Object.keys(counts).reduce((result, key) => {
+      result[key] = counts[key] + base[key]
+      return result
+    }, {})
+    const sum = Object.values(totals).reduce((total, value) => total + value, 0)
+    return Object.keys(totals).reduce((result, key) => {
+      result[key] = (totals[key] / sum) * 100
+      return result
+    }, {})
+  }
+
+  function getScriptKeywordCounts(text) {
+    const normalized = String(text).toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
+    const tokens = normalized.split(/\s+/).filter(Boolean)
+    const counts = Object.keys(SCRIPT_EMOTION_KEYWORDS).reduce((obj, key) => {
+      obj[key] = 0
+      return obj
+    }, {})
+
+    for (const token of tokens) {
+      for (const [key, keywords] of Object.entries(SCRIPT_EMOTION_KEYWORDS)) {
+        if (keywords.includes(token)) {
+          counts[key] += 1
+        }
+      }
     }
 
-    const total = Object.values(base).reduce((sum, value) => sum + value, 0)
-    const norm = {}
-    Object.keys(base).forEach((key) => {
-      norm[key] = (base[key] / total) * 100
-    })
-    return norm
+    return counts
+  }
+
+  function generateScriptResults(text) {
+    const counts = getScriptKeywordCounts(text)
+    const countSum = Object.values(counts).reduce((sum, value) => sum + value, 0)
+    if (countSum === 0) {
+      const seed = Array.from(text).reduce((sum, char) => sum + char.charCodeAt(0), 0)
+      const offsets = {
+        angry: (seed % 5) + 2,
+        disgust: ((seed >> 2) % 4) + 1,
+        fear: ((seed >> 4) % 5) + 2,
+        happy: ((seed >> 6) % 8) + 6,
+        neutral: ((seed >> 8) % 6) + 8,
+        sad: ((seed >> 10) % 4) + 2,
+        surprise: ((seed >> 12) % 5) + 2,
+      }
+      return normalizeScriptScores(offsets)
+    }
+    return normalizeScriptScores(counts)
   }
 
   function runScriptAnalysis() {
@@ -194,7 +238,7 @@ export default function Home() {
       if (processed >= limit) {
         processed = limit
         clearInterval(interval)
-        const results = generateScriptResults()
+        const results = generateScriptResults(uploadedText)
         setScriptResults(results)
 
         const sorted = [...SCRIPT_EMOTIONS].sort((a, b) => results[b.key] - results[a.key])
