@@ -230,7 +230,27 @@ export default function Home() {
       body: JSON.stringify({ text }),
     })
 
-    const result = await response.json()
+    let result = null
+    const contentType = response.headers.get('content-type') || ''
+
+    if (contentType.includes('application/json')) {
+      try {
+        result = await response.json()
+      } catch (parseError) {
+        const textBody = await response.text()
+        throw new Error(`Failed to parse JSON response from inference proxy: ${parseError.message}${textBody ? ` — body: ${textBody}` : ''}`)
+      }
+    } else {
+      const textBody = await response.text()
+      if (!response.ok) {
+        throw new Error(
+          `Hugging Face inference proxy failed: ${response.status} ${response.statusText}${textBody ? ` — ${textBody}` : ''}`
+        )
+      }
+      throw new Error(
+        `Unexpected response content-type from inference proxy: ${contentType}${textBody ? ` — body: ${textBody}` : ''}`
+      )
+    }
 
     if (!response.ok) {
       const reason = result?.error || response.statusText || 'Unknown inference error'
