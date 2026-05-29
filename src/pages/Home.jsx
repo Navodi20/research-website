@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import animeDataset from '../data/animeDataset.json'
 import './Home.css'
 
 const EMOTIONS = [
@@ -20,23 +21,7 @@ const SCRIPT_EMOTIONS = [
   { key: 'surprise', label: 'Surprise', color: '#c084fc' },
 ]
 
-const ANIME_DB = [
-  { name: 'Attack on Titan', anger: 85, disgust: 40, fear: 75, joy: 15, sadness: 60, surprise: 70 },
-  { name: 'Your Lie in April', anger: 10, disgust: 5, fear: 20, joy: 80, sadness: 90, surprise: 40 },
-  { name: 'Naruto Shippuden', anger: 60, disgust: 15, fear: 45, joy: 70, sadness: 50, surprise: 65 },
-  { name: 'Death Note', anger: 55, disgust: 30, fear: 60, joy: 10, sadness: 25, surprise: 80 },
-  { name: 'Spirited Away', anger: 20, disgust: 25, fear: 50, joy: 75, sadness: 35, surprise: 85 },
-  { name: 'Neon Genesis Evangelion', anger: 45, disgust: 20, fear: 80, joy: 20, sadness: 85, surprise: 60 },
-  { name: 'One Punch Man', anger: 30, disgust: 10, fear: 15, joy: 80, sadness: 10, surprise: 90 },
-  { name: 'Sword Art Online', anger: 50, disgust: 20, fear: 40, joy: 70, sadness: 45, surprise: 55 },
-  { name: 'Fullmetal Alchemist: Brotherhood', anger: 70, disgust: 30, fear: 55, joy: 50, sadness: 75, surprise: 65 },
-  { name: 'Violet Evergarden', anger: 15, disgust: 5, fear: 15, joy: 55, sadness: 95, surprise: 30 },
-  { name: 'Demon Slayer', anger: 65, disgust: 25, fear: 60, joy: 55, sadness: 50, surprise: 70 },
-  { name: 'Hunter x Hunter', anger: 55, disgust: 20, fear: 50, joy: 65, sadness: 60, surprise: 70 },
-  { name: 'Cowboy Bebop', anger: 40, disgust: 15, fear: 30, joy: 45, sadness: 70, surprise: 50 },
-  { name: 'Steins;Gate', anger: 35, disgust: 10, fear: 55, joy: 40, sadness: 80, surprise: 90 },
-  { name: 'My Hero Academia', anger: 45, disgust: 10, fear: 40, joy: 85, sadness: 35, surprise: 65 },
-]
+const ANIME_DB = animeDataset
 
 const initialSliders = EMOTIONS.reduce((acc, emotion) => {
   acc[emotion.key] = emotion.default
@@ -140,7 +125,12 @@ export default function Home() {
 
     const top5 = [...finalScores]
       .sort((a, b) => b.final - a.final)
-      .filter((value, index, array) => array.findIndex((item) => item.name === value.name) === index)
+      .filter(
+        (value, index, array) =>
+          array.findIndex(
+            (item) => item.anime_name === value.anime_name && item.episode_name === value.episode_name
+          ) === index
+      )
       .slice(0, 5)
 
     setAnchors(currentAnchors)
@@ -430,12 +420,13 @@ export default function Home() {
                   </div>
                   <div className="recs-panel">
                     {recommendations.map((anime, index) => {
-                      const desc = generateVibeDesc(Object.fromEntries(EMOTIONS.map((emotion) => [emotion.key, anime[emotion.key]])))
+                      const desc = anime.vibe || generateVibeDesc(Object.fromEntries(EMOTIONS.map((emotion) => [emotion.key, anime[emotion.key]])))
                       return (
-                        <div key={anime.name} className={`rec-item ${index === 0 ? 'top-rec-highlight' : ''}`}>
+                        <div key={`${anime.anime_name}-${anime.episode_name || index}`} className={`rec-item ${index === 0 ? 'top-rec-highlight' : ''}`}>
                           <div className={`rec-rank ${index === 0 ? 'top' : ''}`}>{index + 1}</div>
                           <div>
-                            <div className="rec-name">{anime.name}</div>
+                            <div className="rec-name">{anime.anime_name}</div>
+                            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4 }}>{anime.episode_name}</div>
                             <div className="rec-desc">"{desc}"</div>
                             <div className="rec-badges">
                               <span className="badge">alpha·tab={anime.tabular.toFixed(3)}</span>
