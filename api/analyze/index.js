@@ -1,3 +1,5 @@
+const fetch = require('node-fetch')
+
 module.exports = async function (context, req) {
   // ── Always return JSON, never text/plain ──────────────────────────────────
   const JSON_HEADERS = {
