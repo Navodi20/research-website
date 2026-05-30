@@ -75,7 +75,7 @@ module.exports = async function (context, req) {
     const EMOTION_LABELS = ['anger', 'disgust', 'fear', 'joy', 'neutral', 'sadness', 'surprise']
 
     // ── HF batch call (j-hartmann expects inputs: string[]) with retry ─────
-    async function callHFBatch(inputLines, retries = 4) {
+    async function callHFBatch(inputLines, retries = 5) {
       for (let attempt = 1; attempt <= retries; attempt++) {
         const hfRes = await fetch(HF_URL, {
           method: 'POST',
@@ -96,7 +96,9 @@ module.exports = async function (context, req) {
           context.log.warn(`HF attempt ${attempt} non-JSON (${hfRes.status}): ${raw.substring(0, 200)}`)
 
           if (raw.toLowerCase().includes('loading') && attempt < retries) {
-            await new Promise(r => setTimeout(r, 5000))
+            const delay = attempt === 1 ? 20000 : 10000
+            context.log.warn(`HF model loading (non-JSON, attempt ${attempt}), retrying in ${delay / 1000}s...`)
+            await new Promise(r => setTimeout(r, delay))
             continue
           }
 
@@ -111,8 +113,9 @@ module.exports = async function (context, req) {
 
         if (json?.error) {
           if (json.error.toLowerCase().includes('loading') && attempt < retries) {
-            context.log.warn(`HF model loading (attempt ${attempt}), retrying in 5s...`)
-            await new Promise(r => setTimeout(r, 5000))
+            const delay = attempt === 1 ? 20000 : 10000
+            context.log.warn(`HF model loading (attempt ${attempt}), retrying in ${delay / 1000}s...`)
+            await new Promise(r => setTimeout(r, delay))
             continue
           }
           throw new Error(`HF error: ${json.error}`)
@@ -147,25 +150,25 @@ module.exports = async function (context, req) {
 
 
     // ── Mode B: array of lines (script analysis) ──────────────────────────
+    // Send all lines in ONE batch call instead of one-by-one.
+    // This prevents the per-line silent-skip problem when the model is cold-loading:
+    // a single retry loop waits for the model, then all lines succeed together.
     const limit = Math.min(lines.length, 100)
-    const allScores = []
+    const validLines = lines.slice(0, limit).map(l => l?.trim()).filter(Boolean)
 
-    for (let i = 0; i < limit; i++) {
-      const line = lines[i]?.trim()
-      if (!line) continue
-
-      try {
-        const result = await callHFBatch([line])
-        // HF batch shape: [ [ {label, score}, ... ] ]
-        if (Array.isArray(result) && Array.isArray(result[0])) {
-          allScores.push(result[0])
-        }
-
-      } catch (lineErr) {
-        // Log but don't abort — skip bad lines
-        context.log.warn(`Skipping line ${i}: ${lineErr.message}`)
+    if (validLines.length === 0) {
+      context.res = {
+        status: 400,
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ error: 'No valid lines found after filtering.' }),
       }
+      return
     }
+
+    const batchResult = await callHFBatch(validLines)
+
+    // batchResult shape: [ [{label,score},...], [{label,score},...], ... ] — one entry per input line
+    const allScores = batchResult.filter(lineResult => Array.isArray(lineResult) && lineResult.length > 0)
 
     if (allScores.length === 0) {
       context.res = {
