@@ -37,6 +37,10 @@ jobs:
           fi
           npm ci
           npm run build
+          if [ -f api/package.json ]; then
+            echo "Installing API dependencies..."
+            npm install --prefix api
+          fi
 
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
