@@ -1,4 +1,4 @@
-export default async function (context, req) {
+module.exports = async function (context, req) {
   try {
     const request = req || context?.req || context?.request
     const body = request?.body ?? (request?.json ? await request.json() : undefined)
@@ -35,7 +35,20 @@ export default async function (context, req) {
       body: JSON.stringify({ inputs: text, options: { wait_for_model: true } }),
     })
 
-    const json = await hfResponse.json()
+    const contentType = hfResponse.headers.get('content-type')
+    let json
+    
+    try {
+      if (contentType?.includes('application/json')) {
+        json = await hfResponse.json()
+      } else {
+        const text = await hfResponse.text()
+        json = { error: `Unexpected response format: ${contentType}. Response: ${text}` }
+      }
+    } catch (parseError) {
+      json = { error: `Failed to parse response: ${parseError.message}` }
+    }
+
     if (!hfResponse.ok || json?.error) {
       return {
         status: hfResponse.status || 502,
