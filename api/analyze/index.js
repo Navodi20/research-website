@@ -72,8 +72,10 @@ module.exports = async function (context, req) {
 
     const HF_URL = 'https://api-inference.huggingface.co/models/j-hartmann/emotion-english-distilroberta-base'
 
-    // ── Single HF call with retry on model cold-start ─────────────────────
-    async function callHF(inputText, retries = 4) {
+    const EMOTION_LABELS = ['anger', 'disgust', 'fear', 'joy', 'neutral', 'sadness', 'surprise']
+
+    // ── HF batch call (j-hartmann expects inputs: string[]) with retry ─────
+    async function callHFBatch(inputLines, retries = 4) {
       for (let attempt = 1; attempt <= retries; attempt++) {
         const hfRes = await fetch(HF_URL, {
           method: 'POST',
@@ -82,14 +84,13 @@ module.exports = async function (context, req) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            inputs: inputText,
+            inputs: inputLines, // array of strings
             options: { wait_for_model: true },
           }),
         })
 
         const ct = hfRes.headers.get('content-type') || ''
 
-        // HF returns text/plain on auth error or cold-start rejection
         if (!ct.includes('application/json')) {
           const raw = await hfRes.text()
           context.log.warn(`HF attempt ${attempt} non-JSON (${hfRes.status}): ${raw.substring(0, 200)}`)
@@ -99,7 +100,6 @@ module.exports = async function (context, req) {
             continue
           }
 
-          // Auth failure (401) or other hard error
           if (hfRes.status === 401 || hfRes.status === 403) {
             throw new Error(`HF authentication failed (${hfRes.status}). Check your API key in Azure Environment Variables.`)
           }
@@ -109,7 +109,6 @@ module.exports = async function (context, req) {
 
         const json = await hfRes.json()
 
-        // HF can return { error: "Model is currently loading" } as JSON too
         if (json?.error) {
           if (json.error.toLowerCase().includes('loading') && attempt < retries) {
             context.log.warn(`HF model loading (attempt ${attempt}), retrying in 5s...`)
@@ -123,14 +122,21 @@ module.exports = async function (context, req) {
           throw new Error(`HF returned status ${hfRes.status}`)
         }
 
-        return json // success: [[{label, score}, ...]]
+        // Expected: [ [ {label, score}, ... ], [ {label, score}, ... ] ]
+        if (!Array.isArray(json) || !Array.isArray(json[0])) {
+          throw new Error(`Unexpected HF response shape: ${JSON.stringify(json).slice(0, 200)}`)
+        }
+
+        return json
       }
       throw new Error('HF inference failed after all retries. Model may still be loading — try again in 30 seconds.')
     }
 
+
     // ── Mode A: single text string ────────────────────────────────────────
     if (text) {
-      const result = await callHF(text.trim())
+      // Mode A: single text string → still send as 1-item batch so response shape is consistent.
+      const result = await callHFBatch([text.trim()])
       context.res = {
         status: 200,
         headers: JSON_HEADERS,
@@ -138,6 +144,7 @@ module.exports = async function (context, req) {
       }
       return
     }
+
 
     // ── Mode B: array of lines (script analysis) ──────────────────────────
     const limit = Math.min(lines.length, 100)
@@ -148,11 +155,12 @@ module.exports = async function (context, req) {
       if (!line) continue
 
       try {
-        const result = await callHF(line)
-        // HF shape: [[{label: "joy", score: 0.92}, ...]]
+        const result = await callHFBatch([line])
+        // HF batch shape: [ [ {label, score}, ... ] ]
         if (Array.isArray(result) && Array.isArray(result[0])) {
           allScores.push(result[0])
         }
+
       } catch (lineErr) {
         // Log but don't abort — skip bad lines
         context.log.warn(`Skipping line ${i}: ${lineErr.message}`)
