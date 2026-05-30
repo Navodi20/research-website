@@ -1,4 +1,5 @@
 const fetch = require('node-fetch')
+const dns = require('dns').promises
 
 module.exports = async function (context, req) {
   // ── Always return JSON, never text/plain ──────────────────────────────────
@@ -33,6 +34,31 @@ module.exports = async function (context, req) {
       process.env.VITE_HUGGINGFACE_API_KEY ||
       process.env.VITE_HF_KEY ||
       process.env.VITE_HUGGING_FACE_API_KEY
+
+    const method = request?.method?.toUpperCase() || 'POST'
+    if (method === 'GET') {
+      let dnsOk = false
+      let dnsError = null
+      try {
+        await dns.lookup('api-inference.huggingface.co')
+        dnsOk = true
+      } catch (err) {
+        dnsError = err.message
+      }
+
+      context.res = {
+        status: 200,
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          probe: true,
+          hfKeyConfigured: !!hfKey,
+          dnsOk,
+          dnsError,
+          host: 'api-inference.huggingface.co',
+        }),
+      }
+      return
+    }
 
     if (!hfKey) {
       context.log.error('HF API key missing from environment variables.')
