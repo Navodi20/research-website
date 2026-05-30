@@ -20,9 +20,10 @@ module.exports = async function (context, req) {
       process.env.VITE_HUGGING_FACE_API_KEY
 
     if (!hfKey) {
+      console.error('HF API key missing. Checked: HUGGINGFACE_API_KEY, VITE_HF_API_KEY, VITE_HUGGINGFACE_API_KEY, HF_API_KEY, VITE_HF_KEY, VITE_HUGGING_FACE_API_KEY')
       return {
         status: 500,
-        body: { error: 'Hugging Face API key not configured in function runtime.' },
+        body: { error: 'Hugging Face API key not configured. Set HUGGINGFACE_API_KEY in environment variables.' },
       }
     }
 
@@ -37,22 +38,32 @@ module.exports = async function (context, req) {
 
     const contentType = hfResponse.headers.get('content-type')
     let json
+    let responseText = ''
     
     try {
       if (contentType?.includes('application/json')) {
         json = await hfResponse.json()
       } else {
-        const text = await hfResponse.text()
-        json = { error: `Unexpected response format: ${contentType}. Response: ${text}` }
+        responseText = await hfResponse.text()
+        json = { error: `HF returned ${hfResponse.status} with content-type: ${contentType}. Response: ${responseText.substring(0, 200)}` }
       }
     } catch (parseError) {
-      json = { error: `Failed to parse response: ${parseError.message}` }
+      json = { error: `Failed to parse HF response: ${parseError.message}` }
     }
 
-    if (!hfResponse.ok || json?.error) {
+    if (!hfResponse.ok) {
+      console.error('HF API Error:', { status: hfResponse.status, contentType, error: json.error })
       return {
         status: hfResponse.status || 502,
         body: { error: json?.error || `Hugging Face inference returned ${hfResponse.status}` },
+      }
+    }
+
+    if (json?.error) {
+      console.error('HF Response Error:', json.error)
+      return {
+        status: 502,
+        body: { error: json.error },
       }
     }
 
