@@ -313,6 +313,22 @@
   height: 5px;
 }
 
+.aniemo-page .emotion-range::-webkit-slider-runnable-track {
+  width: 100%;
+  height: inherit;
+  border-radius: 2px;
+  background: inherit;
+  cursor: pointer;
+}
+
+.aniemo-page .emotion-range::-moz-range-track {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+}
+
 .aniemo-page .emotion-range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
