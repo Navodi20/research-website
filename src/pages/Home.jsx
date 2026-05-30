@@ -193,19 +193,16 @@ export default function Home() {
   }
 
   function normalizeScriptScores(counts) {
-    const base = { angry: 1, disgust: 1, fear: 1, happy: 3, neutral: 4, sad: 1, surprise: 1 }
-    const totals = Object.keys(counts).reduce((result, key) => {
-      result[key] = counts[key] + base[key]
-      return result
-    }, {})
-    const sum = Object.values(totals).reduce((total, value) => total + value, 0)
-    return Object.keys(totals).reduce((result, key) => {
-      result[key] = (totals[key] / sum) * 100
+    // Match Colab: use model outputs directly, only normalize to percentages.
+    const sum = Object.values(counts).reduce((total, value) => total + value, 0) || 1
+    return Object.keys(counts).reduce((result, key) => {
+      result[key] = (counts[key] / sum) * 100
       return result
     }, {})
   }
 
   function mapHfLabelToKey(label) {
+
     const mapping = {
       angry: 'angry',
       anger: 'angry',
@@ -221,16 +218,17 @@ export default function Home() {
     return mapping[label.toLowerCase()] || 'neutral'
   }
 
-  async function analyzeWithHuggingFace(text) {
+  async function analyzeWithHuggingFaceLines(lines) {
     const response = await fetch('/api/analyze', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ lines }),
     })
 
     let result = null
+
     const contentType = response.headers.get('content-type') || ''
 
     if (contentType.includes('application/json')) {
@@ -259,16 +257,28 @@ export default function Home() {
 
     const counts = { angry: 0, disgust: 0, fear: 0, happy: 0, neutral: 0, sad: 0, surprise: 0 }
 
+    // Backend returns either:
+    // - Mode A (text): [[{label, score}, ...]]
+    // - Mode B (lines): { scores: { label: value(0-100) }, ... }
     if (Array.isArray(result)) {
+      // Mode A shape: [[{label, score}, ...]]
       for (const item of result) {
         const key = mapHfLabelToKey(item.label || '')
         counts[key] += item.score || 0
       }
-    } else {
-      throw new Error('Unexpected inference API response format.')
+      return counts
     }
 
-    return counts
+    if (result?.scores && typeof result.scores === 'object') {
+      for (const [label, score] of Object.entries(result.scores)) {
+        const key = mapHfLabelToKey(label || '')
+        counts[key] += Number(score) || 0
+      }
+      return counts
+    }
+
+    throw new Error('Unexpected inference API response format.')
+
   }
 
   async function generateScriptResults(text) {
@@ -282,10 +292,10 @@ export default function Home() {
     }
 
     const sample = lines.slice(0, Math.min(25, lines.length))
-    const prompt = sample.join(' ')
-    const counts = await analyzeWithHuggingFace(prompt)
+    const counts = await analyzeWithHuggingFaceLines(sample)
     return normalizeScriptScores(counts)
   }
+
 
   function getScriptKeywordCounts(text) {
     const normalized = String(text).toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
