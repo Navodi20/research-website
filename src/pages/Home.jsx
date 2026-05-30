@@ -60,6 +60,7 @@ export default function Home() {
   const [analysisError, setAnalysisError] = useState('')
   const [scriptResults, setScriptResults] = useState(initialScriptResults)
   const [scriptSummary, setScriptSummary] = useState('—')
+  const [scriptSource, setScriptSource] = useState(null)
 
   useEffect(() => {
     setAnchors(computeAnchors(sliders))
@@ -218,69 +219,7 @@ export default function Home() {
     return mapping[label.toLowerCase()] || 'neutral'
   }
 
-  // Call HF directly from the browser as a single batch request.
-  // Returns [[{label,score},...], ...] (one inner array per input line) or throws.
-  async function callHFDirectBatch(lines) {
-    const hfKey =
-      import.meta.env.VITE_HF_API_KEY ||
-      import.meta.env.VITE_HUGGINGFACE_API_KEY ||
-      import.meta.env.VITE_HF_KEY
-    if (!hfKey) return null // no client-side key — caller falls back to backend proxy
-
-    const HF_MODEL_URL =
-      'https://api-inference.huggingface.co/models/j-hartmann/emotion-english-distilroberta-base'
-
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      const res = await fetch(HF_MODEL_URL, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${hfKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs: lines, options: { wait_for_model: true } }),
-      })
-
-      let json
-      try { json = await res.json() } catch {
-        if (attempt < 5) { await new Promise(r => setTimeout(r, 15000)); continue }
-        throw new Error(`HF returned non-JSON (${res.status})`)
-      }
-
-      if (json?.error) {
-        if (json.error.toLowerCase().includes('loading') && attempt < 5) {
-          await new Promise(r => setTimeout(r, attempt === 1 ? 20000 : 10000))
-          continue
-        }
-        throw new Error(`HF error: ${json.error}`)
-      }
-
-      if (!res.ok) throw new Error(`HF returned status ${res.status}`)
-
-      if (!Array.isArray(json) || !Array.isArray(json[0])) {
-        throw new Error(`Unexpected HF response shape: ${JSON.stringify(json).slice(0, 120)}`)
-      }
-
-      return json
-    }
-
-    throw new Error('HF model is still loading after retries. Please try again in 30 seconds.')
-  }
-
   async function analyzeWithHuggingFaceLines(lines) {
-    const counts = { angry: 0, disgust: 0, fear: 0, happy: 0, neutral: 0, sad: 0, surprise: 0 }
-
-    // Primary path: call HF directly from the browser (one batch, handles loading retries).
-    // This avoids the per-line backend proxy issue entirely.
-    const directResult = await callHFDirectBatch(lines)
-
-    if (directResult) {
-      for (const lineScores of directResult) {
-        for (const { label, score } of lineScores) {
-          const key = mapHfLabelToKey(label || '')
-          counts[key] += score || 0
-        }
-      }
-      return counts
-    }
-
-    // Fallback: no VITE_HF_API_KEY — route through the backend proxy.
     const response = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -291,40 +230,34 @@ export default function Home() {
     const contentType = response.headers.get('content-type') || ''
 
     if (contentType.includes('application/json')) {
-      try {
-        result = await response.json()
-      } catch (parseError) {
-        const textBody = await response.text()
-        throw new Error(`Failed to parse JSON from proxy: ${parseError.message}${textBody ? ` — ${textBody}` : ''}`)
-      }
+      result = await response.json()
     } else {
-      const textBody = await response.text()
-      throw new Error(
-        `Inference proxy error (${response.status}): ${textBody || response.statusText}`
-      )
+      const text = await response.text()
+      throw new Error(`Inference error (${response.status}): ${text || response.statusText}`)
     }
 
     if (!response.ok) {
-      throw new Error(`Hugging Face inference proxy failed: ${result?.error || response.statusText}`)
+      throw new Error(result?.error || `Inference failed (${response.status})`)
     }
 
-    // Backend Mode B: { scores: { label: value(0-100) }, ... }
+    const counts = { angry: 0, disgust: 0, fear: 0, happy: 0, neutral: 0, sad: 0, surprise: 0 }
+
     if (result?.scores && typeof result.scores === 'object') {
       for (const [label, score] of Object.entries(result.scores)) {
         const key = mapHfLabelToKey(label || '')
         counts[key] += Number(score) || 0
       }
-      return counts
+      return { counts, source: result.source || 'unknown', linesAnalyzed: result.lines_analyzed || lines.length }
     }
 
-    // Backend Mode A fallback: [[{label, score}, ...]]
+    // Old backend shape fallback: [[{label, score}, ...]]
     if (Array.isArray(result)) {
       const flat = Array.isArray(result[0]) ? result[0] : result
       for (const item of flat) {
         const key = mapHfLabelToKey(item.label || '')
         counts[key] += item.score || 0
       }
-      return counts
+      return { counts, source: 'huggingface', linesAnalyzed: lines.length }
     }
 
     throw new Error('Unexpected inference API response format.')
@@ -341,8 +274,8 @@ export default function Home() {
     }
 
     const sample = lines.slice(0, Math.min(25, lines.length))
-    const counts = await analyzeWithHuggingFaceLines(sample)
-    return normalizeScriptScores(counts)
+    const { counts, source, linesAnalyzed } = await analyzeWithHuggingFaceLines(sample)
+    return { scores: normalizeScriptScores(counts), source, linesAnalyzed }
   }
 
 
@@ -372,16 +305,19 @@ export default function Home() {
     setAnalysisRunning(true)
     setScriptResults(initialScriptResults)
     setScriptSummary('—')
+    setScriptSource(null)
     setShowResults(true)
 
     try {
-      const results = await generateScriptResults(uploadedText)
+      const { scores: results, source, linesAnalyzed } = await generateScriptResults(uploadedText)
       setScriptResults(results)
+      setScriptSource(source)
 
       const sorted = [...SCRIPT_EMOTIONS].sort((a, b) => results[b.key] - results[a.key])
       const top3 = sorted.slice(0, 3)
+      const engineLabel = source === 'local' ? 'Local lexicon engine' : 'DistilRoBERTa · HF'
       setScriptSummary(
-        `The script's dominant emotional signature is ${top3[0].label.toLowerCase()} (${results[top3[0].key].toFixed(1)}%), with notable presence of ${top3[1].label.toLowerCase()} (${results[top3[1].key].toFixed(1)}%) and ${top3[2].label.toLowerCase()} (${results[top3[2].key].toFixed(1)}%). DistilRoBERTa inference averaged across the first 25 dialogue lines.`
+        `The script's dominant emotional signature is ${top3[0].label.toLowerCase()} (${results[top3[0].key].toFixed(1)}%), with notable presence of ${top3[1].label.toLowerCase()} (${results[top3[1].key].toFixed(1)}%) and ${top3[2].label.toLowerCase()} (${results[top3[2].key].toFixed(1)}%). ${engineLabel} averaged across ${linesAnalyzed} dialogue lines.`
       )
     } catch (error) {
       setAnalysisError(error?.message || 'Analysis failed.')
@@ -693,10 +629,21 @@ export default function Home() {
                     <span className="section-label-text">Emotional Fingerprint</span>
                     <div className="section-label-line" />
                   </div>
+                  {scriptSource && (
+                    <span style={{
+                      fontSize: 11, padding: '3px 8px', borderRadius: 99, whiteSpace: 'nowrap', marginLeft: 12,
+                      fontFamily: "'DM Mono', monospace",
+                      background: scriptSource === 'local' ? 'rgba(251,146,60,0.12)' : 'rgba(192,132,252,0.12)',
+                      color: scriptSource === 'local' ? '#fb923c' : '#c084fc',
+                      border: `1px solid ${scriptSource === 'local' ? 'rgba(251,146,60,0.28)' : 'rgba(192,132,252,0.28)'}`,
+                    }}>
+                      {scriptSource === 'local' ? 'Local Lexicon' : 'DistilRoBERTa · HF'}
+                    </span>
+                  )}
                 </div>
 
                 <div id="script-processing" style={{ display: analysisRunning ? 'block' : 'none', padding: 20, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10, fontFamily: "'DM Mono', monospace" }}>Calling j-hartmann/emotion-english-distilroberta-base...</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10, fontFamily: "'DM Mono', monospace" }}>Analyzing emotion profile...</div>
                   <div className="loading-bar"><div className="loading-fill" /></div>
                   <div id="script-progress" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>Analyzing up to 25 dialogue lines...</div>
                 </div>
