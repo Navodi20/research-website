@@ -218,17 +218,76 @@ export default function Home() {
     return mapping[label.toLowerCase()] || 'neutral'
   }
 
+  // Call HF directly from the browser as a single batch request.
+  // Returns [[{label,score},...], ...] (one inner array per input line) or throws.
+  async function callHFDirectBatch(lines) {
+    const hfKey =
+      import.meta.env.VITE_HF_API_KEY ||
+      import.meta.env.VITE_HUGGINGFACE_API_KEY ||
+      import.meta.env.VITE_HF_KEY
+    if (!hfKey) return null // no client-side key — caller falls back to backend proxy
+
+    const HF_MODEL_URL =
+      'https://api-inference.huggingface.co/models/j-hartmann/emotion-english-distilroberta-base'
+
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const res = await fetch(HF_MODEL_URL, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${hfKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputs: lines, options: { wait_for_model: true } }),
+      })
+
+      let json
+      try { json = await res.json() } catch {
+        if (attempt < 5) { await new Promise(r => setTimeout(r, 15000)); continue }
+        throw new Error(`HF returned non-JSON (${res.status})`)
+      }
+
+      if (json?.error) {
+        if (json.error.toLowerCase().includes('loading') && attempt < 5) {
+          await new Promise(r => setTimeout(r, attempt === 1 ? 20000 : 10000))
+          continue
+        }
+        throw new Error(`HF error: ${json.error}`)
+      }
+
+      if (!res.ok) throw new Error(`HF returned status ${res.status}`)
+
+      if (!Array.isArray(json) || !Array.isArray(json[0])) {
+        throw new Error(`Unexpected HF response shape: ${JSON.stringify(json).slice(0, 120)}`)
+      }
+
+      return json
+    }
+
+    throw new Error('HF model is still loading after retries. Please try again in 30 seconds.')
+  }
+
   async function analyzeWithHuggingFaceLines(lines) {
+    const counts = { angry: 0, disgust: 0, fear: 0, happy: 0, neutral: 0, sad: 0, surprise: 0 }
+
+    // Primary path: call HF directly from the browser (one batch, handles loading retries).
+    // This avoids the per-line backend proxy issue entirely.
+    const directResult = await callHFDirectBatch(lines)
+
+    if (directResult) {
+      for (const lineScores of directResult) {
+        for (const { label, score } of lineScores) {
+          const key = mapHfLabelToKey(label || '')
+          counts[key] += score || 0
+        }
+      }
+      return counts
+    }
+
+    // Fallback: no VITE_HF_API_KEY — route through the backend proxy.
     const response = await fetch('/api/analyze', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lines }),
     })
 
     let result = null
-
     const contentType = response.headers.get('content-type') || ''
 
     if (contentType.includes('application/json')) {
@@ -236,39 +295,20 @@ export default function Home() {
         result = await response.json()
       } catch (parseError) {
         const textBody = await response.text()
-        throw new Error(`Failed to parse JSON response from inference proxy: ${parseError.message}${textBody ? ` — body: ${textBody}` : ''}`)
+        throw new Error(`Failed to parse JSON from proxy: ${parseError.message}${textBody ? ` — ${textBody}` : ''}`)
       }
     } else {
       const textBody = await response.text()
-      if (!response.ok) {
-        throw new Error(
-          `Hugging Face inference proxy failed: ${response.status} ${response.statusText}${textBody ? ` — ${textBody}` : ''}`
-        )
-      }
       throw new Error(
-        `Unexpected response content-type from inference proxy: ${contentType}${textBody ? ` — body: ${textBody}` : ''}`
+        `Inference proxy error (${response.status}): ${textBody || response.statusText}`
       )
     }
 
     if (!response.ok) {
-      const reason = result?.error || response.statusText || 'Unknown inference error'
-      throw new Error(`Hugging Face inference proxy failed: ${reason}`)
+      throw new Error(`Hugging Face inference proxy failed: ${result?.error || response.statusText}`)
     }
 
-    const counts = { angry: 0, disgust: 0, fear: 0, happy: 0, neutral: 0, sad: 0, surprise: 0 }
-
-    // Backend returns either:
-    // - Mode A (text): [[{label, score}, ...]]
-    // - Mode B (lines): { scores: { label: value(0-100) }, ... }
-    if (Array.isArray(result)) {
-      // Mode A shape: [[{label, score}, ...]]
-      for (const item of result) {
-        const key = mapHfLabelToKey(item.label || '')
-        counts[key] += item.score || 0
-      }
-      return counts
-    }
-
+    // Backend Mode B: { scores: { label: value(0-100) }, ... }
     if (result?.scores && typeof result.scores === 'object') {
       for (const [label, score] of Object.entries(result.scores)) {
         const key = mapHfLabelToKey(label || '')
@@ -277,8 +317,17 @@ export default function Home() {
       return counts
     }
 
-    throw new Error('Unexpected inference API response format.')
+    // Backend Mode A fallback: [[{label, score}, ...]]
+    if (Array.isArray(result)) {
+      const flat = Array.isArray(result[0]) ? result[0] : result
+      for (const item of flat) {
+        const key = mapHfLabelToKey(item.label || '')
+        counts[key] += item.score || 0
+      }
+      return counts
+    }
 
+    throw new Error('Unexpected inference API response format.')
   }
 
   async function generateScriptResults(text) {
