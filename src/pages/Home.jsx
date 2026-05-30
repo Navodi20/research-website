@@ -11,26 +11,6 @@ const EMOTIONS = [
   { key: 'surprise', label: 'Surprise', color: '#c084fc', default: 10 },
 ]
 
-const SCRIPT_EMOTIONS = [
-  { key: 'angry', label: 'Angry', color: '#f87171' },
-  { key: 'disgust', label: 'Disgust', color: '#fb923c' },
-  { key: 'fear', label: 'Fear', color: '#fbbf24' },
-  { key: 'happy', label: 'Happy', color: '#34d399' },
-  { key: 'neutral', label: 'Neutral', color: '#94a3b8' },
-  { key: 'sad', label: 'Sad', color: '#60a5fa' },
-  { key: 'surprise', label: 'Surprise', color: '#c084fc' },
-]
-
-const SCRIPT_EMOTION_KEYWORDS = {
-  angry: ['angry', 'anger', 'rage', 'kill', 'fight', 'attack', 'hate', 'furious', 'violent', 'scream'],
-  disgust: ['disgust', 'disgusting', 'gross', 'nasty', 'sick', 'dirty', 'filth', 'rotten', 'revolting', 'vomit'],
-  fear: ['fear', 'afraid', 'scared', 'terrified', 'panic', 'horror', 'danger', 'threat', 'fright', 'nervous'],
-  happy: ['happy', 'joy', 'joyful', 'smile', 'laugh', 'cheer', 'delight', 'love', 'excited', 'sunny', 'bright'],
-  neutral: ['okay', 'fine', 'clear', 'routine', 'normal', 'neutral', 'steady', 'simple', 'matter', 'detail'],
-  sad: ['sad', 'sorrow', 'cry', 'tears', 'lonely', 'mourn', 'grief', 'hurt', 'regret', 'depressed'],
-  surprise: ['surprise', 'surprised', 'wow', 'shock', 'shocked', 'unexpected', 'astonished', 'sudden', 'amazing', 'incredible'],
-}
-
 const ANIME_DB = animeDataset
 
 const initialSliders = EMOTIONS.reduce((acc, emotion) => {
@@ -38,28 +18,13 @@ const initialSliders = EMOTIONS.reduce((acc, emotion) => {
   return acc
 }, {})
 
-const initialScriptResults = SCRIPT_EMOTIONS.reduce((acc, emotion) => {
-  acc[emotion.key] = 0
-  return acc
-}, {})
-
 export default function Home() {
-  const [activeTab, setActiveTab] = useState('recommend')
   const [sliders, setSliders] = useState(initialSliders)
   const [alpha, setAlpha] = useState(0.7)
   const [anchors, setAnchors] = useState({ ti: 0, eb: 0, pi: 0 })
   const [showResults, setShowResults] = useState(false)
   const [recommendations, setRecommendations] = useState([])
   const [vibeText, setVibeText] = useState('—')
-  const [uploadedLines, setUploadedLines] = useState([])
-  const [fileName, setFileName] = useState('—')
-  const [fileLines, setFileLines] = useState(0)
-  const [uploadedText, setUploadedText] = useState('')
-  const [analysisReady, setAnalysisReady] = useState(false)
-  const [analysisRunning, setAnalysisRunning] = useState(false)
-  const [analysisError, setAnalysisError] = useState('')
-  const [scriptResults, setScriptResults] = useState(initialScriptResults)
-  const [scriptSummary, setScriptSummary] = useState('—')
 
   useEffect(() => {
     setAnchors(computeAnchors(sliders))
@@ -151,197 +116,6 @@ export default function Home() {
     setShowResults(true)
   }
 
-  function handleFileUpload(event) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    setAnalysisError('')
-
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const content = e.target?.result || ''
-      const lines = String(content)
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line && !/^\d+$/.test(line) && !/^\d{2}:\d{2}/.test(line))
-
-      setUploadedText(String(content))
-      setUploadedLines(lines)
-      setFileName(file.name)
-      setFileLines(lines.length)
-      setAnalysisReady(lines.length > 0)
-    }
-    reader.readAsText(file)
-  }
-
-  function handleDrop(event) {
-    event.preventDefault()
-    event.stopPropagation()
-    const file = event.dataTransfer?.files?.[0]
-    if (!file) return
-    const fileInput = document.getElementById('file-input')
-    if (fileInput) {
-      const dataTransfer = new DataTransfer()
-      dataTransfer.items.add(file)
-      fileInput.files = dataTransfer.files
-    }
-    handleFileUpload({ target: { files: [file] } })
-  }
-
-  function handleDragOver(event) {
-    event.preventDefault()
-    event.stopPropagation()
-  }
-
-  function normalizeScriptScores(counts) {
-    // Match Colab: use model outputs directly, only normalize to percentages.
-    const sum = Object.values(counts).reduce((total, value) => total + value, 0) || 1
-    return Object.keys(counts).reduce((result, key) => {
-      result[key] = (counts[key] / sum) * 100
-      return result
-    }, {})
-  }
-
-  function mapHfLabelToKey(label) {
-
-    const mapping = {
-      angry: 'angry',
-      anger: 'angry',
-      disgust: 'disgust',
-      fear: 'fear',
-      joy: 'happy',
-      happiness: 'happy',
-      neutral: 'neutral',
-      sadness: 'sad',
-      sad: 'sad',
-      surprise: 'surprise',
-    }
-    return mapping[label.toLowerCase()] || 'neutral'
-  }
-
-  async function analyzeWithHuggingFaceLines(lines) {
-    const response = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ lines }),
-    })
-
-    let result = null
-
-    const contentType = response.headers.get('content-type') || ''
-
-    if (contentType.includes('application/json')) {
-      try {
-        result = await response.json()
-      } catch (parseError) {
-        const textBody = await response.text()
-        throw new Error(`Failed to parse JSON response from inference proxy: ${parseError.message}${textBody ? ` — body: ${textBody}` : ''}`)
-      }
-    } else {
-      const textBody = await response.text()
-      if (!response.ok) {
-        throw new Error(
-          `Hugging Face inference proxy failed: ${response.status} ${response.statusText}${textBody ? ` — ${textBody}` : ''}`
-        )
-      }
-      throw new Error(
-        `Unexpected response content-type from inference proxy: ${contentType}${textBody ? ` — body: ${textBody}` : ''}`
-      )
-    }
-
-    if (!response.ok) {
-      const reason = result?.error || response.statusText || 'Unknown inference error'
-      throw new Error(`Hugging Face inference proxy failed: ${reason}`)
-    }
-
-    const counts = { angry: 0, disgust: 0, fear: 0, happy: 0, neutral: 0, sad: 0, surprise: 0 }
-
-    // Backend returns either:
-    // - Mode A (text): [[{label, score}, ...]]
-    // - Mode B (lines): { scores: { label: value(0-100) }, ... }
-    if (Array.isArray(result)) {
-      // Mode A shape: [[{label, score}, ...]]
-      for (const item of result) {
-        const key = mapHfLabelToKey(item.label || '')
-        counts[key] += item.score || 0
-      }
-      return counts
-    }
-
-    if (result?.scores && typeof result.scores === 'object') {
-      for (const [label, score] of Object.entries(result.scores)) {
-        const key = mapHfLabelToKey(label || '')
-        counts[key] += Number(score) || 0
-      }
-      return counts
-    }
-
-    throw new Error('Unexpected inference API response format.')
-
-  }
-
-  async function generateScriptResults(text) {
-    const lines = String(text)
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line && !/^\d+$/.test(line) && !/^\d{2}:\d{2}/.test(line))
-
-    if (!lines.length) {
-      throw new Error('No valid dialogue lines found in the uploaded script.')
-    }
-
-    const sample = lines.slice(0, Math.min(25, lines.length))
-    const counts = await analyzeWithHuggingFaceLines(sample)
-    return normalizeScriptScores(counts)
-  }
-
-
-  function getScriptKeywordCounts(text) {
-    const normalized = String(text).toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
-    const tokens = normalized.split(/\s+/).filter(Boolean)
-    const counts = Object.keys(SCRIPT_EMOTION_KEYWORDS).reduce((obj, key) => {
-      obj[key] = 0
-      return obj
-    }, {})
-
-    for (const token of tokens) {
-      for (const [key, keywords] of Object.entries(SCRIPT_EMOTION_KEYWORDS)) {
-        if (keywords.includes(token)) {
-          counts[key] += 1
-        }
-      }
-    }
-
-    return counts
-  }
-
-  async function runScriptAnalysis() {
-    if (!analysisReady) return
-
-    setAnalysisError('')
-    setAnalysisRunning(true)
-    setScriptResults(initialScriptResults)
-    setScriptSummary('—')
-    setShowResults(true)
-
-    try {
-      const results = await generateScriptResults(uploadedText)
-      setScriptResults(results)
-
-      const sorted = [...SCRIPT_EMOTIONS].sort((a, b) => results[b.key] - results[a.key])
-      const top3 = sorted.slice(0, 3)
-      setScriptSummary(
-        `The script's dominant emotional signature is ${top3[0].label.toLowerCase()} (${results[top3[0].key].toFixed(1)}%), with notable presence of ${top3[1].label.toLowerCase()} (${results[top3[1].key].toFixed(1)}%) and ${top3[2].label.toLowerCase()} (${results[top3[2].key].toFixed(1)}%). DistilRoBERTa inference averaged across the first 25 dialogue lines.`
-      )
-    } catch (error) {
-      setAnalysisError(error?.message || 'Analysis failed.')
-      setScriptSummary('—')
-    } finally {
-      setAnalysisRunning(false)
-    }
-  }
-
   return (
     <div className="aniemo-page">
       <div className="orb2" />
@@ -352,14 +126,6 @@ export default function Home() {
             <div className="logo-text">Ani<span>Emo</span></div>
           </div>
           <div className="header-badge">Dissertation Research System v2.0</div>
-          <div className="nav-pills">
-            <button className={`nav-pill ${activeTab === 'recommend' ? 'active' : ''}`} onClick={() => setActiveTab('recommend')}>
-              Recommendation
-            </button>
-            <button className={`nav-pill ${activeTab === 'script' ? 'active' : ''}`} onClick={() => setActiveTab('script')}>
-              Script Analysis
-            </button>
-          </div>
         </div>
       </header>
 
@@ -390,7 +156,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div id="tab-recommend" className={`rec-panel-content ${activeTab !== 'recommend' ? 'hidden' : ''}`}>
+        <div id="tab-recommend" className="rec-panel-content">
           <div className="main-layout">
             <div>
               <div className="panel fade-up delay-1" style={{ marginBottom: 16 }}>
@@ -583,119 +349,6 @@ export default function Home() {
           </div>
         </div>
 
-        <div id="tab-script" className={`script-panel ${activeTab === 'script' ? 'active' : ''}`}>
-          <div className="main-layout">
-            <div>
-              <div className="panel">
-                <div className="panel-header">
-                  <div className="panel-icon" style={{ background: 'rgba(52,211,153,0.1)' }}>📄</div>
-                  <div className="panel-title">Script Upload</div>
-                </div>
-                <div className="panel-body">
-                  <div
-                    className="upload-zone"
-                    onClick={() => document.getElementById('file-input')?.click()}
-                    onDrop={handleDrop}
-                    onDragOver={handleDragOver}
-                  >
-                    <div className="upload-icon">📁</div>
-                    <div className="upload-title">Drop subtitle file here</div>
-                    <div className="upload-sub">Supports .srt, .txt — max 100 lines analyzed</div>
-                  </div>
-                  <input type="file" id="file-input" accept=".srt,.txt" onChange={handleFileUpload} hidden />
-
-
-                  <div id="file-info" style={{ display: analysisReady ? 'block' : 'none', padding: 12, background: 'var(--surface2)', borderRadius: 8, marginBottom: 14 }}>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fileName}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{fileLines} dialogue lines detected</div>
-                  </div>
-                  {analysisError ? (
-                    <div style={{ marginBottom: 12, padding: 12, borderRadius: 12, background: 'rgba(248, 113, 113, 0.12)', border: '1px solid rgba(248, 113, 113, 0.2)', color: '#fca5a5', fontSize: 13 }}>
-                      {analysisError}
-                    </div>
-                  ) : null}
-
-                  <button className="run-btn" onClick={runScriptAnalysis} disabled={!analysisReady} style={{ opacity: analysisReady ? 1 : 0.4 }}>
-                    &#9654; Analyze Script
-                  </button>
-
-                  <div className="arch-tags">
-                    <span className="arch-tag">DistilRoBERTa</span>
-                    <span className="arch-tag">7-class</span>
-                    <span className="arch-tag">softmax</span>
-                    <span className="arch-tag">mean-pool</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div id="script-results-area">
-              <div id="script-placeholder" style={{ display: !analysisReady || (!analysisRunning && scriptSummary === '—') ? 'flex' : 'none', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 400, gap: 16 }}>
-                <div style={{ width: 64, height: 64, borderRadius: 16, background: 'var(--surface2)', border: '1px solid var(--border2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, opacity: 0.4 }}>📊</div>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 6, color: 'var(--text-secondary)' }}>Upload a Script</div>
-                  <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>DistilRoBERTa will extract the emotional fingerprint</div>
-                </div>
-              </div>
-
-              <div id="script-results" style={{ display: scriptSummary !== '—' ? 'block' : 'none' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                  <div className="section-label" style={{ marginBottom: 0, flex: 1 }}>
-                    <span className="section-label-text">Emotional Fingerprint</span>
-                    <div className="section-label-line" />
-                  </div>
-                </div>
-
-                <div id="script-processing" style={{ display: analysisRunning ? 'block' : 'none', padding: 20, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10, fontFamily: "'DM Mono', monospace" }}>Calling j-hartmann/emotion-english-distilroberta-base...</div>
-                  <div className="loading-bar"><div className="loading-fill" /></div>
-                  <div id="script-progress" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>Analyzing up to 25 dialogue lines...</div>
-                </div>
-
-                <div className="analysis-results">
-                  <div className="emo-grid">
-                    {SCRIPT_EMOTIONS.map((emotion) => {
-                      const pct = scriptResults[emotion.key] || 0
-                      const maxPct = Math.max(...Object.values(scriptResults), 0.1)
-                      return (
-                        <div className="emo-cell" key={emotion.key}>
-                          <div className="emo-cell-label">{emotion.label}</div>
-                          <div className="emo-cell-pct" style={{ color: emotion.color }}>{pct.toFixed(1)}%</div>
-                          <div className="emo-cell-bar">
-                            <div className="emo-cell-fill" style={{ width: `${(pct / maxPct) * 100}%`, background: emotion.color }} />
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                <div className="emotion-viz" style={{ marginTop: 16 }}>
-                  <div className="section-label">
-                    <span className="section-label-text">Score Distribution</span>
-                    <div className="section-label-line" />
-                  </div>
-                  <div className="emotion-bars">
-                    {[...SCRIPT_EMOTIONS].sort((a, b) => (scriptResults[b.key] || 0) - (scriptResults[a.key] || 0)).map((emotion) => (
-                      <div className="emo-bar-row" key={emotion.key}>
-                        <span className="emo-bar-label">{emotion.label}</span>
-                        <div className="emo-bar-track">
-                          <div className="emo-bar-fill" style={{ width: `${scriptResults[emotion.key] || 0}%`, background: emotion.color }} />
-                        </div>
-                        <span className="emo-bar-pct">{(scriptResults[emotion.key] || 0).toFixed(1)}%</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="vibe-card" style={{ marginTop: 16 }}>
-                  <div className="vibe-title">Emotional Tone Summary</div>
-                  <div className="vibe-text">{scriptSummary}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
       <footer>

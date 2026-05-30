@@ -22,25 +22,12 @@ jobs:
 
       - name: Build
         env:
-          # Opt into Node 24 for JavaScript actions on the runner (prevents deprecation warnings)
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-          # Accept either `VITE_HF_API_KEY` or the alternate `VITE_HF_KEY` repository secret
-          VITE_HF_API_KEY: ${{ secrets.VITE_HF_API_KEY || secrets.VITE_HF_KEY }}
         run: |
-          # Sanity check: print Node and npm versions
           node -v
           npm -v
-          # Ensure the Hugging Face key is available at build time for Vite
-          if [ -z "$VITE_HF_API_KEY" ]; then
-            echo "ERROR: VITE_HF_API_KEY is not set in Secrets (tried VITE_HF_API_KEY and VITE_HF_KEY)"
-            exit 1
-          fi
           npm ci
           npm run build
-          if [ -f api/package.json ]; then
-            echo "Installing API dependencies..."
-            npm install --prefix api
-          fi
 
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
@@ -49,5 +36,4 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }} # Used for GitHub integrations (do not change)
           action: "upload"
           app_location: "/" # App root
-          api_location: "api"   # Azure Functions API proxy
           output_location: "dist" # Vite build output
